@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent, JSX } from 'react';
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
-import type { Layout } from '../types';
+import type { GuideStyle, Layout } from '../types';
 import {
   GRID_LABELS,
   STRUCTURE_LABELS,
@@ -11,6 +11,27 @@ import {
   maxPerLine,
   paginate,
 } from '../lib/layout';
+import {
+  FOUR_LINE_MIN_GAP,
+  FOUR_LINE_Y_DEFAULT,
+  FOUR_LINE_Y_MAX,
+  FOUR_LINE_Y_MIN,
+  GUIDE_DEFAULT,
+  GUIDE_DASH_MAX,
+  GUIDE_DASH_MIN,
+  GUIDE_GAP_MAX,
+  GUIDE_GAP_MIN,
+  HUIGONG_INSET_DEFAULT,
+  HUIGONG_INSET_MAX,
+  HUIGONG_INSET_MIN,
+  HUIGONG_SIZE_DEFAULT,
+  HUIGONG_SIZE_MIN,
+  clampFourLineAt,
+  clampHuigongInset,
+  clampHuigongSize,
+  fourLineRangeAt,
+  huigongSizeMaxFor,
+} from '../lib/guides';
 import { parseInput } from '../lib/input';
 import { readingsOf } from '../lib/pinyin';
 import { charMetaOf, dataStats, importStrokes, strokeCountOf } from '../lib/data';
@@ -94,6 +115,8 @@ export default function Editor(): JSX.Element {
   const [replaceText, setReplaceText] = useState('');
   const [dataVer, setDataVer] = useState(0);
   const [exportPage, setExportPage] = useState(0);
+  /** 辅助线越界夹回的即时提示（下次调整时清掉） */
+  const [guideWarn, setGuideWarn] = useState('');
   const previewRef = useRef<HTMLDivElement>(null);
 
   // 进入编辑器时初始化输入框与选中字
@@ -101,6 +124,7 @@ export default function Editor(): JSX.Element {
     if (ws) {
       setText(ws.chars.join(' '));
       setSelected(ws.chars[0] ?? '');
+      setGuideWarn('');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ws?.id]);
@@ -175,6 +199,61 @@ export default function Editor(): JSX.Element {
 
   const updateLayout = (patch: Partial<Layout>) =>
     setWs((w) => (w ? { ...w, layout: clampLayout({ ...w.layout, ...patch }) } : w));
+
+  /** 回宫格离边：内框随离边收窄，越界时把边长夹回并提示 */
+  const onHuigongInset = (n: number) => {
+    if (!ws || !Number.isFinite(n)) { setGuideWarn(''); return; }
+    const cur = clampLayout(ws.layout);
+    const r = clampHuigongInset(n, cur.huigongSize!);
+    updateLayout({ huigongInset: r.inset, huigongSize: r.size });
+    setGuideWarn(
+      r.clamped
+        ? `离边须在 ${HUIGONG_INSET_MIN}~${HUIGONG_INSET_MAX}，且内框不得越出外框，已自动夹回（边长 ${r.size}）`
+        : '',
+    );
+  };
+
+  /** 回宫格内框边长：不得越过外框，超了夹到贴边并提示 */
+  const onHuigongSize = (n: number) => {
+    if (!ws || !Number.isFinite(n)) { setGuideWarn(''); return; }
+    const cur = clampLayout(ws.layout);
+    const r = clampHuigongSize(n, cur.huigongInset!);
+    const max = huigongSizeMaxFor(r.inset);
+    updateLayout({ huigongInset: r.inset, huigongSize: r.size });
+    setGuideWarn(r.clamped ? `内框已到外框边缘（离边 ${r.inset} 时边长最多 ${max}），已夹回` : '');
+  };
+
+  /** 四线格某条线：与邻线至少隔开 FOUR_LINE_MIN_GAP，挤在一起时夹回并提示 */
+  const onFourLineY = (index: number, n: number) => {
+    if (!ws || !Number.isFinite(n)) { setGuideWarn(''); return; }
+    const cur = clampLayout(ws.layout);
+    const range = fourLineRangeAt(cur.fourLineYs!, index);
+    const r = clampFourLineAt(cur.fourLineYs!, index, n);
+    updateLayout({ fourLineYs: r.ys });
+    setGuideWarn(
+      r.clamped
+        ? `第 ${index + 1} 条线与相邻线至少间隔 ${FOUR_LINE_MIN_GAP}，已夹回 ${range.min}~${range.max} 范围`
+        : '',
+    );
+  };
+
+  /** 辅助线样式（颜色 / 虚线段长 / 间隔） */
+  const onGuide = (patch: Partial<GuideStyle>) => {
+    if (!ws) return;
+    const guide = { ...clampLayout(ws.layout).guide!, ...patch };
+    updateLayout({ guide });
+  };
+
+  /** 辅助线与回宫/四线位置全部恢复传统默认 */
+  const resetGuide = () => {
+    updateLayout({
+      guide: { ...GUIDE_DEFAULT },
+      huigongInset: HUIGONG_INSET_DEFAULT,
+      huigongSize: HUIGONG_SIZE_DEFAULT,
+      fourLineYs: FOUR_LINE_Y_DEFAULT.map((v) => v) as Layout['fourLineYs'],
+    });
+    setGuideWarn('已恢复默认辅助线设置');
+  };
 
   const onTextChange = (v: string, sortBy?: boolean) => {
     setText(v);
@@ -281,7 +360,10 @@ export default function Editor(): JSX.Element {
             <select
               data-testid="grid-select"
               value={layout.grid}
-              onChange={(e) => updateLayout({ grid: e.target.value as Layout['grid'] })}
+              onChange={(e) => {
+                setGuideWarn('');
+                updateLayout({ grid: e.target.value as Layout['grid'] });
+              }}
             >
               {Object.entries(GRID_LABELS).map(([k, label]) => (
                 <option key={k} value={k}>{label}</option>
@@ -304,6 +386,84 @@ export default function Editor(): JSX.Element {
           <NumField label="每行格数" value={layout.perLine} min={1} max={maxPerLine(clamped.cellMm)} testid="per-line" onChange={(n) => updateLayout({ perLine: n })} />
           <NumField label="每页行数" value={layout.lines} min={1} max={maxLines(clamped.cellMm, clamped.lineGapMm)} testid="lines" onChange={(n) => updateLayout({ lines: n })} />
           <RangeField label="行距 mm" value={layout.lineGapMm} min={0} max={12} testid="line-gap" onChange={(n) => updateLayout({ lineGapMm: n })} />
+
+          <h3>辅助线设置</h3>
+          <p className="hint">用于田/米/回宫格的虚线与横线格中线；设置随字帖保存。</p>
+          <label className="field">
+            <span>辅助线颜色</span>
+            <input
+              type="color"
+              data-testid="guide-color"
+              value={clamped.guide!.color}
+              onChange={(e) => onGuide({ color: e.target.value })}
+            />
+          </label>
+          <RangeField
+            label="虚线段长"
+            value={clamped.guide!.dash}
+            min={GUIDE_DASH_MIN}
+            max={GUIDE_DASH_MAX}
+            testid="guide-dash"
+            onChange={(n) => onGuide({ dash: n })}
+          />
+          <RangeField
+            label="虚线间隔"
+            value={clamped.guide!.gap}
+            min={GUIDE_GAP_MIN}
+            max={GUIDE_GAP_MAX}
+            testid="guide-gap"
+            onChange={(n) => onGuide({ gap: n })}
+          />
+          <p className="hint">段长设为 {GUIDE_DASH_MIN} 时画实线。</p>
+          {layout.grid === 'huigong' && (
+            <>
+              <NumField
+                label="内框离边"
+                value={layout.huigongInset ?? HUIGONG_INSET_DEFAULT}
+                min={HUIGONG_INSET_MIN}
+                max={HUIGONG_INSET_MAX}
+                testid="huigong-inset"
+                onChange={onHuigongInset}
+              />
+              <NumField
+                label="内框边长"
+                value={layout.huigongSize ?? HUIGONG_SIZE_DEFAULT}
+                min={HUIGONG_SIZE_MIN}
+                max={huigongSizeMaxFor(clamped.huigongInset!)}
+                testid="huigong-size"
+                onChange={onHuigongSize}
+              />
+              <p className="hint">
+                离边 {HUIGONG_INSET_MIN}~{HUIGONG_INSET_MAX}，边长 {HUIGONG_SIZE_MIN}~
+                {huigongSizeMaxFor(clamped.huigongInset!)}（须 ≤ 100 − 2×离边）。
+              </p>
+            </>
+          )}
+          {layout.grid === 'line' && layout.fourLine && (
+            <div className="four-line-fields" data-testid="four-line-fields">
+              {clamped.fourLineYs!.map((v, i) => {
+                const { min, max } = fourLineRangeAt(clamped.fourLineYs!, i);
+                return (
+                  <NumField
+                    key={i}
+                    label={`第 ${i + 1} 条线`}
+                    value={v}
+                    min={min}
+                    max={max}
+                    testid={`four-line-y${i}`}
+                    onChange={(n) => onFourLineY(i, n)}
+                  />
+                );
+              })}
+              <p className="hint">
+                位置 {FOUR_LINE_Y_MIN}~{FOUR_LINE_Y_MAX}，相邻两条至少间隔 {FOUR_LINE_MIN_GAP}。
+              </p>
+            </div>
+          )}
+          {guideWarn && (
+            <p className="error" data-testid="guide-warn">{guideWarn}</p>
+          )}
+          <button className="btn" data-testid="guide-reset" onClick={resetGuide}>恢复默认辅助线</button>
 
           <h3>内容组合</h3>
           <label className="field">

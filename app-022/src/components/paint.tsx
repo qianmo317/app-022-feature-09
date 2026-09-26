@@ -6,6 +6,17 @@ import type { JSX } from 'react';
 import type { Cell, Layout, Row } from '../types';
 import { getStrokes, charMetaOf } from '../lib/data';
 import { isCjk } from '../lib/input';
+import {
+  FOUR_LINE_Y_DEFAULT,
+  HUIGONG_INSET_DEFAULT,
+  HUIGONG_SIZE_DEFAULT,
+  dashArrayOf,
+  huigongInsetOf,
+  huigongSizeMaxFor,
+  huigongSizeOf,
+  sanitizeFourLineYs,
+  sanitizeGuide,
+} from '../lib/guides';
 
 export const INFO_H = 20;
 export const ROW_H = 100 + INFO_H; // 120
@@ -17,7 +28,6 @@ const TRACE_W = 62;
 const STEP_DONE_COLOR = '#bfbfbf';
 const STEP_CURRENT_COLOR = '#222222';
 const MODEL_COLOR = '#222222';
-const GUIDE_COLOR = '#e8a3a3';
 const BORDER_COLOR = '#9aa0a6';
 const PINYIN_COLOR = '#c0563c';
 const META_COLOR = '#666666';
@@ -31,30 +41,36 @@ export function glyphTransform(cx: number, cy: number): string {
   return `translate(${cx} ${cy}) scale(${GLYPH_K}) translate(-512 -450) scale(1 -1) translate(0 -900)`;
 }
 
-/** 网格底（田/米/回宫/方/横线/四线格） */
+/** 网格底（田/米/回宫/方/横线/四线格）；辅助线/内框/四线位置全部取自 layout */
 export function GridLines({ x0, layout, y0 = INFO_H }: { x0: number; layout: Layout; y0?: number }): JSX.Element {
   const y = y0;
   const base = x0;
   const border = { stroke: BORDER_COLOR, strokeWidth: 2, fill: 'none' } as const;
-  const guide = { stroke: GUIDE_COLOR, strokeWidth: 1.6, strokeDasharray: '5 4', fill: 'none' } as const;
+  const guideStyle = sanitizeGuide(layout.guide);
+  const guide = {
+    stroke: guideStyle.color,
+    strokeWidth: 1.6,
+    strokeDasharray: dashArrayOf(guideStyle),
+    fill: 'none',
+  } as const;
 
   if (layout.grid === 'line') {
     if (layout.fourLine) {
-      // 拼音四线格：四条横线，间距略不均（上格小，适合字母主体）
-      const ys = [y + 12, y + 40, y + 68, y + 96];
+      // 拼音四线格：四条横线位置可配（夹取后严格递增）
+      const ys = sanitizeFourLineYs(layout.fourLineYs ?? FOUR_LINE_Y_DEFAULT);
       return (
         <g data-grid="line4">
           {ys.map((ly, i) => (
-            <line key={i} x1={base} y1={ly} x2={base + 100} y2={ly} stroke={BORDER_COLOR} strokeWidth={i === 0 ? 1 : 2} />
+            <line key={i} x1={base} y1={y + ly} x2={base + 100} y2={y + ly} stroke={BORDER_COLOR} strokeWidth={i === 0 ? 1 : 2} />
           ))}
         </g>
       );
     }
-    // 横线格：底线 + 浅虚线中线
+    // 横线格：底线 + 浅虚线中线（中线疏密/颜色随辅助线设置）
     return (
       <g data-grid="line">
         <line x1={base} y1={y + 100} x2={base + 100} y2={y + 100} stroke={BORDER_COLOR} strokeWidth={2} />
-        <line x1={base} y1={y + 50} x2={base + 100} y2={y + 50} stroke={GUIDE_COLOR} strokeWidth={1.4} strokeDasharray="5 4" />
+        <line x1={base} y1={y + 50} x2={base + 100} y2={y + 50} {...guide} strokeWidth={1.4} />
       </g>
     );
   }
@@ -78,15 +94,23 @@ export function GridLines({ x0, layout, y0 = INFO_H }: { x0: number; layout: Lay
           <line x1={base} y1={y + 100} x2={base + 100} y2={y} />
         </g>
       )}
-      {layout.grid === 'huigong' && (
-        <g>
-          <g {...guide}>
-            <line x1={midX} y1={y} x2={midX} y2={y + 100} />
-            <line x1={base} y1={midY} x2={base + 100} y2={midY} />
+      {layout.grid === 'huigong' && (() => {
+        const inset = huigongInsetOf(layout.huigongInset ?? HUIGONG_INSET_DEFAULT);
+        // 绘制端再夹一道：任何调用路径下内框都不越出外框
+        const inner = Math.min(
+          huigongSizeOf(layout.huigongSize ?? HUIGONG_SIZE_DEFAULT),
+          huigongSizeMaxFor(inset),
+        );
+        return (
+          <g>
+            <g {...guide}>
+              <line x1={midX} y1={y} x2={midX} y2={y + 100} />
+              <line x1={base} y1={midY} x2={base + 100} y2={midY} />
+            </g>
+            <rect x={base + inset} y={y + inset} width={inner} height={inner} {...guide} />
           </g>
-          <rect x={base + 16} y={y + 16} width={68} height={68} {...guide} />
-        </g>
-      )}
+        );
+      })()}
     </g>
   );
 }

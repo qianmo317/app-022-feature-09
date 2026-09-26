@@ -1,6 +1,17 @@
-import type { Block, Layout, Page, Row } from '../types';
+import type { Block, FourLineYs, Layout, Page, Row } from '../types';
 import { isCjk } from './input';
 import { ROW_FACTOR } from '../components/paint';
+import {
+  FOUR_LINE_Y_DEFAULT,
+  GUIDE_DEFAULT,
+  HUIGONG_INSET_DEFAULT,
+  HUIGONG_SIZE_DEFAULT,
+  huigongInsetOf,
+  huigongSizeMaxFor,
+  huigongSizeOf,
+  sanitizeFourLineYs,
+  sanitizeGuide,
+} from './guides';
 
 /** A4 页面几何（mm）。左右留 5mm 装订边距，保证 10×20mm 默认每行格数正好放下。 */
 export const PAGE = {
@@ -46,7 +57,7 @@ export function maxLines(cellMm: number, lineGapMm: number): number {
   return Math.max(1, Math.floor(rowsAreaHMm / pitch));
 }
 
-/** 约束并修正非法/超界的版式配置 */
+/** 约束并修正非法/超界的版式配置（含辅助线/内框/四线位置） */
 export function clampLayout(layout: Layout): Layout {
   const cellMm = Math.min(35, Math.max(12, Math.round(layout.cellMm)));
   const gap = Math.min(12, Math.max(0, Math.round(layout.lineGapMm)));
@@ -58,7 +69,23 @@ export function clampLayout(layout: Layout): Layout {
     trace: Math.min(8, Math.max(0, Math.round(layout.mix.trace))),
     blank: Math.min(8, Math.max(0, Math.round(layout.mix.blank))),
   };
-  return { ...layout, cellMm, lineGapMm: gap, perLine, lines, mix };
+  // 辅助线样式、回宫格内框、四线格位置（旧存档缺字段时自动补默认值）
+  const guide = sanitizeGuide(layout.guide);
+  const huigongInset = huigongInsetOf(layout.huigongInset);
+  const huigongSize = Math.min(huigongSizeOf(layout.huigongSize), huigongSizeMaxFor(huigongInset));
+  const fourLineYs = sanitizeFourLineYs(layout.fourLineYs);
+  return {
+    ...layout,
+    cellMm,
+    lineGapMm: gap,
+    perLine,
+    lines,
+    mix,
+    guide,
+    huigongInset,
+    huigongSize,
+    fourLineYs,
+  };
 }
 
 /**
@@ -126,4 +153,8 @@ export const defaultLayout: Layout = {
   mix: { model: 1, strokeSteps: 3, trace: 2, blank: 4 },
   show: { pinyin: true, radical: true, strokeCount: true, structure: true },
   traceColor: '#cccccc',
+  guide: { ...GUIDE_DEFAULT },
+  huigongInset: HUIGONG_INSET_DEFAULT,
+  huigongSize: HUIGONG_SIZE_DEFAULT,
+  fourLineYs: FOUR_LINE_Y_DEFAULT.map((v) => v) as FourLineYs,
 };

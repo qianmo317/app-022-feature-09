@@ -3,6 +3,19 @@ export type GridKind = 'tian' | 'mi' | 'huigong' | 'square' | 'line';
 
 export type Mix = { model: number; strokeSteps: number; trace: number; blank: number };
 
+/** 辅助线样式（田/米/回宫的虚线与中线、横线格中线） */
+export type GuideStyle = {
+  /** 线条颜色（#rrggbb） */
+  color: string;
+  /** 虚线段长（unit，>=2 时为虚线，1 = 实线） */
+  dash: number;
+  /** 虚线间隔（unit） */
+  gap: number;
+};
+
+/** 拼音四线格四条横线的纵坐标（0~100 unit，自格顶向下，必须严格递增） */
+export type FourLineYs = [number, number, number, number];
+
 export type Layout = {
   grid: GridKind;
   perLine: number;
@@ -14,6 +27,14 @@ export type Layout = {
   traceColor: string;
   /** 拼音四线格（配合 grid=line 使用） */
   fourLine?: boolean;
+  /** 辅助线颜色与虚线疏密 */
+  guide?: GuideStyle;
+  /** 回宫格内框离边距离（unit，四边相同，0~49） */
+  huigongInset?: number;
+  /** 回宫格内框边长（unit，2~100，受 inset 联动约束） */
+  huigongSize?: number;
+  /** 四线格四条线的位置（仅 fourLine 时使用） */
+  fourLineYs?: FourLineYs;
 };
 
 export type CharStructure = 'left_right' | 'top_bottom' | 'single' | 'enclosure';

@@ -80,6 +80,8 @@ textarea { width: 100%; resize: vertical; }
 .field-group > span { display: block; font-size: 13px; color: #374151; margin-bottom: 4px; }
 .checks { display: flex; flex-wrap: wrap; gap: 8px 14px; font-size: 13px; margin: 8px 0; }
 .checks label { display: flex; align-items: center; gap: 4px; }
+.field input[type="color"] { width: 42px; height: 30px; padding: 2px 4px; cursor: pointer; }
+.four-line-fields { border-left: 2px solid #e3e7ec; padding-left: 10px; margin: 6px 0; }
 .pinyin-choices { display: flex; flex-wrap: wrap; gap: 8px; }
 .pinyin-choices label { display: flex; align-items: center; gap: 4px; }
 .meta-list { list-style: none; padding: 0; margin: 10px 0; font-size: 13px; color: #374151; }

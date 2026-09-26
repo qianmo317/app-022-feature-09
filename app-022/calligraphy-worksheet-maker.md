@@ -20,7 +20,7 @@
 
 ## 4. 核心功能（MVP）
 1. **输入与去重**：粘贴文本后按 `parseInput` 过滤（只留汉字/字母/数字）、去重并保留首次出现顺序，可勾选按笔画数排序（无笔画数据的字排最后）。
-2. **格线类型**：田字格 `tian`、米字格 `mi`、回宫格 `huigong`（外框 + 68×68 内框）、方格 `square`、横线格 `line`；`line` 下可切「拼音四线格」。
+2. **格线类型**：田字格 `tian`、米字格 `mi`、回宫格 `huigong`（外框 + 可配内框，默认离边 16、边长 68）、方格 `square`、横线格 `line`；`line` 下可切「拼音四线格」（四条线位置可配，默认 12/40/68/96）。辅助线颜色与虚线疏密、回宫格内框离边与边长、四线格四线位置均可在编辑器调整，随字帖持久化。
 3. **每字小格组合**：`mix = { model, strokeSteps, trace, blank }`，例字 0/1 格、笔顺分解 0~8 格（格数取 `min(配置, 笔画数)`）、描红 0~8 格、临写空格 0~8 格。
 4. **分页不拆字**：贪心按行填充，一个字的所有小格必须落在同一行同一页；一行不跨页。
 5. **多音字**：字面板列出该字全部读音（如「行」共 4 个选项），选中的读音写入 `pinyinChoice` 并在预览信息带显示。
@@ -55,6 +55,10 @@ type Layout = {
   grid: GridKind; perLine: number; lines: number; cellMm: number; lineGapMm: number;
   mix: Mix; show: { pinyin: boolean; radical: boolean; strokeCount: boolean; structure: boolean };
   traceColor: string; fourLine?: boolean;
+  guide?: { color: string; dash: number; gap: number };   // 辅助线颜色/虚线段长/间隔（unit）
+  huigongInset?: number;    // 回宫格内框离边，0~49（默认 16）
+  huigongSize?: number;     // 回宫格内框边长，2~100 且 ≤100−2×离边（默认 68）
+  fourLineYs?: [number, number, number, number]; // 四线格四线位置 0~100，相邻≥4（默认 12/40/68/96）
 };
 type Worksheet = {
   id: string; title: string; chars: string[]; layout: Layout; pages: number; updatedAt: number;
@@ -75,6 +79,7 @@ type Row = Block[]; type Page = Row[];
 - **块组合** `buildBlock`：`model` 先入；`strokeSteps > 0 且 strokeCount != null` 时入 `min(strokeSteps, strokeCount)` 个 `step`；**无笔顺数据的汉字（`strokeCount == null && isCjk`）不生成分解格也不生成描红格**（避免误教），只留例字与空格；最后 `slice(0, perLine)` 兜底，保证块不超一行。
 - **贪心分页** `paginate`：逐字取块，若当前行已有内容且 `used + cells.length > perLine` 就换行，再按 `lines` 切页；空内容也返回一页空白字帖。
 - **渲染单位制**（`src/components/paint.tsx`）：`INFO_H = 20`、`ROW_H = 100 + INFO_H = 120`、`ROW_FACTOR = ROW_H / 100 = 1.2`；1 unit = `cellMm/100` mm，即每格 100×100 units + 上方 20 units 信息带。预览、打印、导出共用 `RowContent`，所见即所得。
+- **辅助线可调**（`src/lib/guides.ts`）：默认值与夹取规则独立成模块。辅助线 `guide = { color, dash, gap }`（颜色 `#rrggbb`、段长/间隔 1~20 unit，段长 1 画实线），默认 `#e8a3a3 / 5 / 4`；回宫格 `huigongInset` 0~49、`huigongSize` 2~100 且 `size ≤ 100−2×inset`——调离边时若内框越出外框，把边长一并夹回 `100−2×inset`，调边长越界则夹到贴边；四线格 `fourLineYs` 四值严格递增、相邻至少间隔 4（`FOUR_LINE_MIN_GAP`）、整体在 0~100，单条编辑只动该条并夹回相邻范围，旧存档由 `sanitizeFourLineYs / sanitizeGuide` 正向规整补默认。夹回发生时编辑器显示红色提示。三项配置写入 `Layout` 随字帖存 localStorage，`GridLines` 是预览/打印/导出 SVG 的唯一绘制来源，三者一致。
 - **字形变换** `glyphTransform(cx, cy) = translate(cx cy) scale(0.092) translate(-512 -450) scale(1 -1) translate(0 -900)`，把 hanzi-writer 的 1024 em box（y 向上）映射到格中心；笔画宽 `STROKE_W = 58`、描红 `TRACE_W = 62`。
 - **字形回退**：有笔顺数据用 SVG path；无数据的汉字/字母用字体 `text`（汉字 82、字母数字 64），并额外标注红色「无笔顺数据」。
 - **导出**：`pageSvgMarkup` 用 `renderToStaticMarkup` 拼整页 SVG（`width/height` 用 mm、`viewBox` 用 px，`PX_MM = 96/25.4`）；PNG 走 `Image` + `canvas.drawImage`，倍率 4（A4 → 约 3175×4490 px）。
@@ -85,13 +90,13 @@ type Row = Block[]; type Page = Row[];
 - 三栏编辑器固定 `300px | minmax(0,1fr) | 280px`；顶部工具条放标题输入、打印入口、导出页码下拉、导出 SVG/PNG。
 - 键盘：编辑器 `←/→` 循环切换选中字，`Ctrl/Cmd+P` 直达打印视图；播放器聚焦时方向键改为逐笔（用 `.player` 判断避免双重响应），`Space` 播放/暂停；焦点在 `INPUT/TEXTAREA/SELECT/contentEditable` 时不抢键（`isFormTarget`）。
 - 预览点击格块选中该字：把点击位置按行 SVG 宽度换算成 unit（`x / 宽度 * perLine * 100`），命中块区间后以 `#4a90d9` 描边高亮。
-- 配色：例字 `#222`、已完成笔 `#bfbfbf`、辅助线 `#e8a3a3` 虚线、边框 `#9aa0a6`、拼音 `#c0563c`、信息 `#666`；描红三档 `#d9d9d9 / #cccccc / #b3b3b3`。
+- 配色：例字 `#222`、已完成笔 `#bfbfbf`、辅助线默认 `#e8a3a3` 虚线（颜色与疏密可在「辅助线设置」里改）、边框 `#9aa0a6`、拼音 `#c0563c`、信息 `#666`；描红三档 `#d9d9d9 / #cccccc / #b3b3b3`。
 - 打印：`@page { size: A4 portrait; margin: 0 }`，`.sheet { page-break-after: always }`（末页 auto），工具栏 `.no-print` 隐藏；打印视图不显示选中态与点击行为（`plain`）。
 - 可访问性：播放器是 `role="img"` + `aria-label`，圆点与按钮带 `aria-label`，播放器可聚焦并有焦点样式；导入的文案与页脚页码都是真实文本。
 
 ## 10. 验收标准
-- **单元测试 31 项**（`tests/unit/`：layout 16、data-import 5、pinyin 5、strokes-data 5 个 `it`）全绿：去重保序、过滤标点、按笔画数排序稳定、`maxPerLine(20)=10`、`maxLines(20,2)=10`、`clampLayout` 边界、`buildBlock` 组合序列、块不超一行、分页不拆字、空内容一页、笔顺数据格式与抽查笔画数（火 4、必 5、方 4、里 7、女 3、绿 11、门 3、飞 3、马 3、鸟 5）、拼音多音字、模板 5 套。
-- **E2E 24 项**（`e2e/`：main-flow 16、print-and-perf 8 个 `test`）通过：主流程统计为 `5 字 · 1 页`、100 字 → `10 页` 且 100 个块无孤儿；「花」7 画出现 7 个步骤圆点、「木」4 画；「行」4 个读音选项且选择后刷新仍在。
+- **单元测试**（`tests/unit/`：layout 16、guides 24、data-import 5、pinyin 5、strokes-data 5 个 `it`）全绿：去重保序、过滤标点、按笔画数排序稳定、`maxPerLine(20)=10`、`maxLines(20,2)=10`、`clampLayout` 边界、辅助线夹取（内框越界夹回边长、四线挤在一起夹回、旧存档规整补默认、预览渲染与导出 SVG 同值）、`buildBlock` 组合序列、块不超一行、分页不拆字、空内容一页、笔顺数据格式与抽查笔画数（火 4、必 5、方 4、里 7、女 3、绿 11、门 3、飞 3、马 3、鸟 5）、拼音多音字、模板 5 套。
+- **E2E**（`e2e/`：main-flow、print-and-perf、guide-settings）通过：主流程统计为 `5 字 · 1 页`、100 字 → `10 页` 且 100 个块无孤儿；「花」7 画出现 7 个步骤圆点、「木」4 画；「行」4 个读音选项且选择后刷新仍在；辅助线设置四组用例覆盖回宫格内框夹回+刷新+打印一致、四线格挤线夹回+刷新+打印一致、颜色/疏密预览/导出/打印同源、恢复默认。
 - **打印一致性**：100mm 校验尺在屏幕宽度落在 375.9~379.9px（1mm = 3.7795px）；`page.pdf({ format: 'A4' })` 的 `/Type /Page` 计数与预览页数一致（100 字 → 10 页）。
 - **无笔顺数据**：`㐀` 显示「无笔顺数据」，块内描红路径数为 0；导入笔顺 JSON 后提示「已导入 1 条」且标注消失。
 - **性能**：100 字全量重排 < 200ms。
