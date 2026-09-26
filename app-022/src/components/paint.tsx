@@ -17,7 +17,6 @@ const TRACE_W = 62;
 const STEP_DONE_COLOR = '#bfbfbf';
 const STEP_CURRENT_COLOR = '#222222';
 const MODEL_COLOR = '#222222';
-const GUIDE_COLOR = '#e8a3a3';
 const BORDER_COLOR = '#9aa0a6';
 const PINYIN_COLOR = '#c0563c';
 const META_COLOR = '#666666';
@@ -36,17 +35,28 @@ export function GridLines({ x0, layout, y0 = INFO_H }: { x0: number; layout: Lay
   const y = y0;
   const base = x0;
   const border = { stroke: BORDER_COLOR, strokeWidth: 2, fill: 'none' } as const;
-  const guide = { stroke: GUIDE_COLOR, strokeWidth: 1.6, strokeDasharray: '5 4', fill: 'none' } as const;
+  const guideSettings = layout.guideSettings;
+  const guideColor = guideSettings?.color ?? '#e8a3a3';
+  const guideDasharray = `${guideSettings?.dash ?? 5} ${guideSettings?.gap ?? 4}`;
+  const guide = {
+    stroke: guideColor,
+    strokeWidth: 1.6,
+    strokeDasharray: guideDasharray,
+    fill: 'none',
+  } as const;
 
   if (layout.grid === 'line') {
     if (layout.fourLine) {
-      // 拼音四线格：四条横线，间距略不均（上格小，适合字母主体）
-      const ys = [y + 12, y + 40, y + 68, y + 96];
+      // 拼音四线格：四条横线的位置来自字帖配置，按 100 单位小格归一化
+      const ys = guideSettings?.fourLineYs ?? [12, 40, 68, 96];
       return (
         <g data-grid="line4">
-          {ys.map((ly, i) => (
-            <line key={i} x1={base} y1={ly} x2={base + 100} y2={ly} stroke={BORDER_COLOR} strokeWidth={i === 0 ? 1 : 2} />
-          ))}
+          {ys.map((gy, i) => {
+            const ly = y + gy;
+            return (
+              <line key={i} x1={base} y1={ly} x2={base + 100} y2={ly} stroke={BORDER_COLOR} strokeWidth={i === 0 ? 1 : 2} />
+            );
+          })}
         </g>
       );
     }
@@ -54,7 +64,7 @@ export function GridLines({ x0, layout, y0 = INFO_H }: { x0: number; layout: Lay
     return (
       <g data-grid="line">
         <line x1={base} y1={y + 100} x2={base + 100} y2={y + 100} stroke={BORDER_COLOR} strokeWidth={2} />
-        <line x1={base} y1={y + 50} x2={base + 100} y2={y + 50} stroke={GUIDE_COLOR} strokeWidth={1.4} strokeDasharray="5 4" />
+        <line x1={base} y1={y + 50} x2={base + 100} y2={y + 50} {...guide} strokeWidth={1.4} />
       </g>
     );
   }
@@ -84,7 +94,13 @@ export function GridLines({ x0, layout, y0 = INFO_H }: { x0: number; layout: Lay
             <line x1={midX} y1={y} x2={midX} y2={y + 100} />
             <line x1={base} y1={midY} x2={base + 100} y2={midY} />
           </g>
-          <rect x={base + 16} y={y + 16} width={68} height={68} {...guide} />
+          <rect
+            x={base + (guideSettings?.huigongInset ?? 16)}
+            y={y + (guideSettings?.huigongInset ?? 16)}
+            width={guideSettings?.huigongSize ?? 68}
+            height={guideSettings?.huigongSize ?? 68}
+            {...guide}
+          />
         </g>
       )}
     </g>

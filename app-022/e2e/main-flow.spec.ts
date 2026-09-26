@@ -192,4 +192,43 @@ test.describe('主流程', () => {
     await page.locator('[data-testid="trace-color"]').nth(2).click(); // 深
     await expect(page.locator('.row-svg path[stroke="#b3b3b3"]').first()).toBeVisible();
   });
+
+  test('回宫格辅助线参数越界会提示并夹回，配置随字帖持久化', async ({ page }) => {
+    await createWorksheet(page, '春');
+    await page.selectOption('[data-testid="grid-select"]', 'huigong');
+    await page.fill('[data-testid="huigong-inset"]', '50');
+    await expect(page.locator('[data-testid="guide-warning"]')).toContainText('内框离边');
+    await expect(page.locator('[data-testid="huigong-inset"]')).toHaveValue('32');
+    await expect(page.locator('[data-grid="huigong"] rect').nth(1)).toHaveAttribute('x', '32');
+    await page.fill('[data-testid="guide-color"]', '#66aaff');
+    await page.fill('[data-testid="guide-dash"]', '7');
+    await page.fill('[data-testid="guide-dash-gap"]', '9');
+    await page.waitForTimeout(600);
+    await page.reload();
+    await expect(page.locator('[data-testid="huigong-inset"]')).toHaveValue('32');
+    await expect(page.locator('[data-testid="guide-color"]')).toHaveValue('#66aaff');
+    await expect(page.locator('[data-testid="guide-dash-gap"]')).toHaveValue('9');
+    await expect(page.locator('[data-grid="huigong"] rect').nth(1)).toHaveAttribute('stroke-dasharray', '7 9');
+  });
+
+  test('四线格位置可调整，线条过近时夹回且导出沿用同一绘制结果', async ({ page }) => {
+    await createWorksheet(page, 'a');
+    await page.selectOption('[data-testid="grid-select"]', 'line');
+    await page.check('[data-testid="four-line"]');
+    await page.fill('[data-testid="four-line-y-2"]', '67');
+    await expect(page.locator('[data-testid="guide-warning"]')).toContainText('第 2 条线');
+    await expect(page.locator('[data-testid="four-line-y-2"]')).toHaveValue('66');
+    const line = page.locator('[data-grid="line4"] line').nth(1);
+    await expect(line).toHaveAttribute('y1', '86'); // INFO_H(20) + 66
+    await expect(line).toHaveAttribute('y2', '86');
+
+    const downloaded = page.waitForEvent('download');
+    await page.click('[data-testid="export-svg"]');
+    const path = await (await downloaded).path();
+    if (path) {
+      const fs = await import('node:fs/promises');
+      const svg = await fs.readFile(path, 'utf8');
+      expect(svg).toContain('<line x1="0" y1="86" x2="100" y2="86" stroke="#9aa0a6" stroke-width="2">');
+    }
+  });
 });

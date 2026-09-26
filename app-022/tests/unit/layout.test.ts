@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { buildBlock, clampLayout, defaultLayout, maxLines, maxPerLine, paginate } from '../../src/lib/layout';
+import {
+  DEFAULT_GUIDE_SETTINGS,
+  buildBlock,
+  clampGuideSettings,
+  clampLayout,
+  defaultLayout,
+  maxLines,
+  maxPerLine,
+  paginate,
+} from '../../src/lib/layout';
 import { isCjk, parseInput } from '../../src/lib/input';
 
 describe('parseInput 去重与过滤', () => {
@@ -55,6 +64,59 @@ describe('版式约束 clampLayout', () => {
     expect(c.mix.strokeSteps).toBe(8);
     expect(c.mix.trace).toBe(0);
     expect(c.mix.blank).toBe(3);
+  });
+});
+
+describe('辅助线参数约束', () => {
+  it('旧字帖缺少辅助线配置时补齐当前默认值', () => {
+    const c = clampLayout({ ...defaultLayout, guideSettings: undefined });
+    expect(c.guideSettings).toEqual(DEFAULT_GUIDE_SETTINGS);
+  });
+
+  it('保存自定义内框离边、边长、颜色与虚线间隔', () => {
+    const c = clampLayout({
+      ...defaultLayout,
+      guideSettings: {
+        ...DEFAULT_GUIDE_SETTINGS,
+        huigongInset: 10,
+        huigongSize: 76,
+        color: '#66aaff',
+        dash: 5,
+        gap: 8,
+      },
+    });
+    expect(c.guideSettings).toMatchObject({ huigongInset: 10, huigongSize: 76, color: '#66aaff', gap: 8 });
+  });
+
+  it('调整离边越出外框时夹到仍可容纳当前边长的范围', () => {
+    const g = clampGuideSettings(
+      { ...DEFAULT_GUIDE_SETTINGS, huigongInset: 16, huigongSize: 68 },
+      { field: 'huigongInset', value: 90 },
+    );
+    expect(g.huigongInset).toBe(32);
+    expect(g.huigongSize).toBe(68);
+  });
+
+  it('调整内框边长越出时夹到当前离边允许的最大边长', () => {
+    const g = clampGuideSettings(
+      { ...DEFAULT_GUIDE_SETTINGS, huigongInset: 30, huigongSize: 40 },
+      { field: 'huigongSize', value: 90 },
+    );
+    expect(g.huigongInset).toBe(30);
+    expect(g.huigongSize).toBe(70);
+  });
+
+  it('四线格相邻线挤在一起时只夹回当前调整的线', () => {
+    const g = clampGuideSettings(
+      { ...DEFAULT_GUIDE_SETTINGS, fourLineYs: [12, 40, 68, 96] },
+      { field: 'fourLineYs', index: 1, value: 67 },
+    );
+    expect(g.fourLineYs).toEqual([12, 66, 68, 96]);
+  });
+
+  it('四线格整体恢复非法旧数据时保证最小间距', () => {
+    const g = clampGuideSettings({ ...DEFAULT_GUIDE_SETTINGS, fourLineYs: [10, 11, 12, 13] });
+    expect(g.fourLineYs).toEqual([10, 12, 14, 16]);
   });
 });
 

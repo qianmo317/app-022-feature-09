@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent, JSX } from 'react';
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
-import type { Layout } from '../types';
+import type { GuideSettings, Layout } from '../types';
 import {
+  DEFAULT_GUIDE_SETTINGS,
   GRID_LABELS,
+  GUIDE_LIMITS,
   STRUCTURE_LABELS,
   TRACE_PRESETS,
   clampLayout,
+  type GuideActive,
   maxLines,
   maxPerLine,
   paginate,
@@ -94,6 +97,7 @@ export default function Editor(): JSX.Element {
   const [replaceText, setReplaceText] = useState('');
   const [dataVer, setDataVer] = useState(0);
   const [exportPage, setExportPage] = useState(0);
+  const [guideWarning, setGuideWarning] = useState('');
   const previewRef = useRef<HTMLDivElement>(null);
 
   // 进入编辑器时初始化输入框与选中字
@@ -122,7 +126,8 @@ export default function Editor(): JSX.Element {
   useEffect(() => {
     if (!ws) return;
     const t = setTimeout(() => {
-      saveWorksheet({ ...ws, pages: paginate(ws.chars, ws.layout, strokeCountOf).length, updatedAt: Date.now() });
+      const layout = clampLayout(ws.layout);
+      saveWorksheet({ ...ws, layout, pages: paginate(ws.chars, layout, strokeCountOf).length, updatedAt: Date.now() });
     }, 250);
     return () => clearTimeout(t);
   }, [ws]);
@@ -137,6 +142,10 @@ export default function Editor(): JSX.Element {
   useEffect(() => {
     setExportPage((p) => Math.min(p, Math.max(0, pageCount - 1)));
   }, [pageCount]);
+
+  useEffect(() => {
+    setGuideWarning('');
+  }, [ws?.id, ws?.layout.grid, ws?.layout.fourLine]);
 
   // 全局键盘：Ctrl/Cmd+P → 打印视图；←→ 切换选中字（输入控件内除外）
   useEffect(() => {
@@ -164,8 +173,9 @@ export default function Editor(): JSX.Element {
   if (notFound) return <Navigate to="/" replace />;
   if (!ws) return <div className="app-state">加载中…</div>;
 
-  const layout = ws.layout;
-  const clamped = clampLayout(layout);
+  const clamped = clampLayout(ws.layout);
+  const layout = clamped;
+  const guideSettings: GuideSettings = layout.guideSettings ?? DEFAULT_GUIDE_SETTINGS;
   const char = selected;
   const readings = char ? readingsOf(char) : [];
   const meta = char ? charMetaOf(char) : undefined;
@@ -175,6 +185,51 @@ export default function Editor(): JSX.Element {
 
   const updateLayout = (patch: Partial<Layout>) =>
     setWs((w) => (w ? { ...w, layout: clampLayout({ ...w.layout, ...patch }) } : w));
+
+  const updateGuideSettings = (patch: Partial<GuideSettings>, active?: GuideActive) => {
+    setWs((w) =>
+      w
+        ? {
+            ...w,
+            layout: clampLayout(
+              { ...w.layout, guideSettings: { ...(w.layout.guideSettings ?? DEFAULT_GUIDE_SETTINGS), ...patch } },
+              active,
+            ),
+          }
+        : w,
+    );
+  };
+
+  const updateHuigongGuide = (field: 'huigongInset' | 'huigongSize', value: number) => {
+    if (!Number.isFinite(value)) return;
+    const current = ws.layout.guideSettings ?? DEFAULT_GUIDE_SETTINGS;
+    const partner = field === 'huigongInset' ? current.huigongSize : current.huigongInset;
+    const max = field === 'huigongInset' ? 100 - partner : 100 - current.huigongInset;
+    const warning =
+      value < 0 || value > max
+        ? field === 'huigongInset'
+          ? `内框离边不能小于 0 或超过 ${max}，已夹回可用范围。`
+          : `内框边长不能小于 ${GUIDE_LIMITS.huigongSize.min} 或大于 ${max}，已夹回可用范围。`
+        : '';
+    setGuideWarning(warning);
+    updateGuideSettings({ [field]: value }, { field, value });
+  };
+
+  const updateFourLine = (index: 0 | 1 | 2 | 3, value: number) => {
+    if (!Number.isFinite(value)) return;
+    const ys = (ws.layout.guideSettings ?? DEFAULT_GUIDE_SETTINGS).fourLineYs;
+    const min = index === 0 ? 0 : ys[index - 1] + GUIDE_LIMITS.fourLineMinGap;
+    const max = index === 3 ? 100 : ys[index + 1] - GUIDE_LIMITS.fourLineMinGap;
+    const warning =
+      value < GUIDE_LIMITS.fourLine.min || value > GUIDE_LIMITS.fourLine.max || value < min || value > max
+        ? `第 ${index + 1} 条线需位于 ${Math.max(0, Math.round(min))}–${Math.min(100, Math.round(max))}，已夹回并保持至少 ${GUIDE_LIMITS.fourLineMinGap} 个单位间距。`
+        : '';
+    setGuideWarning(warning);
+    updateGuideSettings(
+      { fourLineYs: ys.map((n, i) => (i === index ? value : n)) as GuideSettings['fourLineYs'] },
+      { field: 'fourLineYs', index, value },
+    );
+  };
 
   const onTextChange = (v: string, sortBy?: boolean) => {
     setText(v);
@@ -298,6 +353,84 @@ export default function Editor(): JSX.Element {
                 onChange={(e) => updateLayout({ fourLine: e.target.checked })}
               />
             </label>
+          )}
+          {layout.grid === 'huigong' && (
+            <>
+              <RangeField
+                label="内框离边"
+                value={guideSettings.huigongInset}
+                min={GUIDE_LIMITS.huigongInset.min}
+                max={GUIDE_LIMITS.huigongInset.max}
+                testid="huigong-inset"
+                onChange={(n) => updateHuigongGuide('huigongInset', n)}
+              />
+              <RangeField
+                label="内框边长"
+                value={guideSettings.huigongSize}
+                min={GUIDE_LIMITS.huigongSize.min}
+                max={GUIDE_LIMITS.huigongSize.max}
+                testid="huigong-size"
+                onChange={(n) => updateHuigongGuide('huigongSize', n)}
+              />
+            </>
+          )}
+          {layout.grid === 'line' && layout.fourLine && (
+            <>
+              {(['第一线', '第二线', '第三线', '第四线'] as const).map((label, i) => {
+                const index = i as 0 | 1 | 2 | 3;
+                return (
+                  <RangeField
+                    key={label}
+                    label={label}
+                    value={guideSettings.fourLineYs[index]}
+                    min={GUIDE_LIMITS.fourLine.min}
+                    max={GUIDE_LIMITS.fourLine.max}
+                    testid={`four-line-y-${index + 1}`}
+                    onChange={(n) => updateFourLine(index, n)}
+                  />
+                );
+              })}
+            </>
+          )}
+          <label className="field">
+            <span>辅助线颜色</span>
+            <input
+              type="color"
+              data-testid="guide-color"
+              value={guideSettings.color}
+              onChange={(e) => {
+                setGuideWarning('');
+                updateGuideSettings({ color: e.target.value });
+              }}
+            />
+          </label>
+          <RangeField
+            label="虚线段长"
+            value={guideSettings.dash}
+            min={GUIDE_LIMITS.dash.min}
+            max={GUIDE_LIMITS.dash.max}
+            testid="guide-dash"
+            onChange={(n) => {
+              setGuideWarning('');
+              updateGuideSettings({ dash: n });
+            }}
+          />
+          <RangeField
+            label="虚线间隔"
+            value={guideSettings.gap}
+            min={GUIDE_LIMITS.gap.min}
+            max={GUIDE_LIMITS.gap.max}
+            testid="guide-dash-gap"
+            onChange={(n) => {
+              setGuideWarning('');
+              updateGuideSettings({ gap: n });
+            }}
+          />
+          <p className="hint">段长不变时间隔越大越疏；两项都会随字帖保存。</p>
+          {guideWarning && (
+            <p className="guide-warning" data-testid="guide-warning" role="alert">
+              {guideWarning}
+            </p>
           )}
           <RangeField label="格宽 mm" value={layout.cellMm} min={12} max={35} testid="cell-mm" onChange={(n) => updateLayout({ cellMm: n })} />
           <p className="hint">每行最多 {maxPerLine(clamped.cellMm)} 格</p>

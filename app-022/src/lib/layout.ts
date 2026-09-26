@@ -1,4 +1,4 @@
-import type { Block, Layout, Page, Row } from '../types';
+import type { Block, GuideSettings, Layout, Page, Row } from '../types';
 import { isCjk } from './input';
 import { ROW_FACTOR } from '../components/paint';
 
@@ -21,6 +21,27 @@ export const TRACE_PRESETS = [
   { label: '中', value: '#cccccc' },
   { label: '深', value: '#b3b3b3' },
 ] as const;
+
+/** 辅助线几何边界（小格内部为 0..100） */
+export const GUIDE_LIMITS = {
+  huigongInset: { min: 0, max: 98 },
+  huigongSize: { min: 2, max: 100 },
+  fourLine: { min: 0, max: 100 },
+  fourLineMinGap: 2,
+  dash: { min: 1, max: 12 },
+  gap: { min: 1, max: 12 },
+} as const;
+
+export const DEFAULT_GUIDE_SETTINGS: GuideSettings = {
+  huigongInset: 16,
+  huigongSize: 68,
+  fourLineYs: [12, 40, 68, 96],
+  color: '#e8a3a3',
+  dash: 5,
+  gap: 4,
+};
+
+export type FourLineGuideTarget = 0 | 1 | 2 | 3;
 
 export const GRID_LABELS: Record<Layout['grid'], string> = {
   tian: '田字格',
@@ -46,8 +67,91 @@ export function maxLines(cellMm: number, lineGapMm: number): number {
   return Math.max(1, Math.floor(rowsAreaHMm / pitch));
 }
 
+function unitNumber(value: unknown, fallback: number): number {
+  const n = Math.round(Number(value));
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function clampUnit(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function normalizeColor(value: unknown): string {
+  return typeof value === 'string' && /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(value)
+    ? value
+    : DEFAULT_GUIDE_SETTINGS.color;
+}
+
+function normalizeFourLineYs(raw: GuideSettings['fourLineYs'] | undefined): GuideSettings['fourLineYs'] {
+  const ys = DEFAULT_GUIDE_SETTINGS.fourLineYs.map((fallback, i) =>
+    clampUnit(unitNumber(raw?.[i], fallback), GUIDE_LIMITS.fourLine.min, GUIDE_LIMITS.fourLine.max),
+  ) as GuideSettings['fourLineYs'];
+
+  for (let i = 1; i < ys.length; i++) {
+    ys[i] = Math.max(ys[i], ys[i - 1] + GUIDE_LIMITS.fourLineMinGap);
+  }
+  for (let i = ys.length - 2; i >= 0; i--) {
+    ys[i] = Math.min(ys[i], ys[i + 1] - GUIDE_LIMITS.fourLineMinGap);
+  }
+  return ys;
+}
+
+export type GuideActive =
+  | { field: 'huigongInset' | 'huigongSize'; value: number }
+  | { field: 'fourLineYs'; index: FourLineGuideTarget; value: number };
+
+/** 归一化辅助线配置；编辑单个数值时优先保留其它已合法的数值，只夹回当前项 */
+export function clampGuideSettings(raw?: Partial<GuideSettings>, active?: GuideActive): GuideSettings {
+  const fallback = raw ?? {};
+  let huigongInset = clampUnit(
+    unitNumber(fallback.huigongInset, DEFAULT_GUIDE_SETTINGS.huigongInset),
+    GUIDE_LIMITS.huigongInset.min,
+    100 - GUIDE_LIMITS.huigongSize.min,
+  );
+  let huigongSize = clampUnit(
+    unitNumber(fallback.huigongSize, DEFAULT_GUIDE_SETTINGS.huigongSize),
+    GUIDE_LIMITS.huigongSize.min,
+    GUIDE_LIMITS.huigongSize.max,
+  );
+  let fourLineYs = normalizeFourLineYs(fallback.fourLineYs);
+
+  if (active?.field === 'huigongInset') {
+    huigongInset = clampUnit(
+      unitNumber(active.value, huigongInset),
+      GUIDE_LIMITS.huigongInset.min,
+      100 - huigongSize,
+    );
+  } else if (active?.field === 'huigongSize') {
+    huigongSize = clampUnit(
+      unitNumber(active.value, huigongSize),
+      GUIDE_LIMITS.huigongSize.min,
+      100 - huigongInset,
+    );
+  } else if (active?.field === 'fourLineYs') {
+    const candidate = unitNumber(active.value, fourLineYs[active.index]);
+    const ys = [...fourLineYs] as GuideSettings['fourLineYs'];
+    ys[active.index] = clampUnit(
+      candidate,
+      active.index === 0 ? 0 : fourLineYs[active.index - 1] + GUIDE_LIMITS.fourLineMinGap,
+      active.index === 3 ? 100 : fourLineYs[active.index + 1] - GUIDE_LIMITS.fourLineMinGap,
+    );
+    fourLineYs = ys;
+  } else if (huigongInset + huigongSize > 100) {
+    huigongSize = 100 - huigongInset;
+  }
+
+  return {
+    huigongInset,
+    huigongSize,
+    fourLineYs,
+    color: normalizeColor(fallback.color),
+    dash: clampUnit(unitNumber(fallback.dash, DEFAULT_GUIDE_SETTINGS.dash), GUIDE_LIMITS.dash.min, GUIDE_LIMITS.dash.max),
+    gap: clampUnit(unitNumber(fallback.gap, DEFAULT_GUIDE_SETTINGS.gap), GUIDE_LIMITS.gap.min, GUIDE_LIMITS.gap.max),
+  };
+}
+
 /** 约束并修正非法/超界的版式配置 */
-export function clampLayout(layout: Layout): Layout {
+export function clampLayout(layout: Layout, guideActive?: GuideActive): Layout {
   const cellMm = Math.min(35, Math.max(12, Math.round(layout.cellMm)));
   const gap = Math.min(12, Math.max(0, Math.round(layout.lineGapMm)));
   const perLine = Math.min(maxPerLine(cellMm), Math.max(1, Math.round(layout.perLine)));
@@ -58,7 +162,8 @@ export function clampLayout(layout: Layout): Layout {
     trace: Math.min(8, Math.max(0, Math.round(layout.mix.trace))),
     blank: Math.min(8, Math.max(0, Math.round(layout.mix.blank))),
   };
-  return { ...layout, cellMm, lineGapMm: gap, perLine, lines, mix };
+  const guideSettings = clampGuideSettings(layout.guideSettings, guideActive);
+  return { ...layout, cellMm, lineGapMm: gap, perLine, lines, mix, guideSettings };
 }
 
 /**
@@ -126,4 +231,5 @@ export const defaultLayout: Layout = {
   mix: { model: 1, strokeSteps: 3, trace: 2, blank: 4 },
   show: { pinyin: true, radical: true, strokeCount: true, structure: true },
   traceColor: '#cccccc',
+  guideSettings: DEFAULT_GUIDE_SETTINGS,
 };

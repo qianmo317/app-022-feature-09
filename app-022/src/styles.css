@@ -38,6 +38,25 @@ input[type="text"], input[type="number"], textarea, select {
   border-radius: 6px;
   background: #fff;
 }
+input[type="color"] {
+  width: 42px;
+  height: 30px;
+  padding: 2px;
+  border: 1px solid #c3c9d1;
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+}
+.guide-warning {
+  margin: 8px 0;
+  padding: 7px 9px;
+  border-radius: 6px;
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  color: #c2410c;
+  font-size: 12px;
+  line-height: 1.4;
+}
 textarea { width: 100%; resize: vertical; }
 
 .app-state { padding: 80px 20px; text-align: center; color: #6b7280; font-size: 15px; }
